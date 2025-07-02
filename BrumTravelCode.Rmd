@@ -1,0 +1,102 @@
+---
+title: "BrumTravelCode"
+output: html_document
+---
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(clipr)
+```
+
+```{r}
+travel <- read.csv("ODWP01EW_MSOA.csv") #reading data from the ONS. the Origin/Destination dataset https://www.ons.gov.uk/visualisations/censusorigindestination/
+
+workingPopulation <- read_excel("wmcaWorkingpopulation.xlsx", skip = 6) %>%
+  rename("msoaCode" = "2021 super output area - middle layer", "2021_working_population" = "2021") %>%
+  mutate(msoaCode = str_sub(msoaCode, 1, 9)) #working population dataset https://www.nomisweb.co.uk/datasets/apsnew 
+```
+
+```{r}
+arriveAtBrum <- travel %>%
+  filter(MSOA.of.workplace.code %in% c("E02006899", "E02006898", "E02006896","E02006895","E02001875","E02001876", "E02006897")) %>% #filter for central birmingham working places
+  filter(Place.of.work.indicator..4.categories..code == "3") %>% #filters for people travelling to work
+  filter(str_detect(Middle.layer.Super.Output.Areas.label, "^(Birmingham|Coventry|Dudley|Sandwell|Walsall|Solihull|Wolverhampton)")) %>% #filter origin location
+  rename("msoaCode" = Middle.layer.Super.Output.Areas.code) %>%
+  left_join(workingPopulation %>% select("msoaCode", "2021_working_population"), by = "msoaCode") %>% #matched working population for each MSOA code
+  mutate(Count = as.numeric(Count)) %>%
+  mutate("2021_working_population" = as.numeric(`2021_working_population`)) %>% #making sure numbers are read as numeric
+  group_by(msoaCode) %>%
+  summarise(
+    Count = sum(Count), #sum of all people travelling to the city for work from each msoa
+    `2021_working_population` = mean(`2021_working_population`), #working population for each msoa. Double check with workingPopulation dataset to make sure
+    .groups = "drop"
+  ) %>% 
+  mutate(shareResidentsCommuteCity = (Count/`2021_working_population`) *100) #creates column which has share of residents that commute to city centre 
+
+
+# Step 2: Add a column to the dataframe comparing each row to the average
+
+totals <- arriveAtBrum %>%
+  summarise(
+    total_count = sum(Count, na.rm = TRUE),
+    total_population = sum(`2021_working_population`, na.rm = TRUE)
+  ) %>%
+  mutate(average_percent = (total_count / total_population) * 100) #share of whole population that commute to city centre for work
+
+average_percent <- totals$average_percent
+
+arriveAtBrum <- arriveAtBrum %>%
+  mutate(difference_from_avg = shareResidentsCommuteCity - average_percent) %>% #difference between share of people in msoa that travel to city centre for work and the wmca average
+  mutate(
+    above_or_below_avg = case_when(
+      shareResidentsCommuteCity > average_percent ~ "Above average",
+      shareResidentsCommuteCity < average_percent ~ "Below average",
+      shareResidentsCommuteCity == average_percent ~ "Equal to average",
+      TRUE ~ NA_character_  # handles missing data
+    )
+  ) %>%
+  write_clip()
+ 
+```
+
+#airport travel 
+
+```{r}
+brumArriveAtAirport <- travel %>%
+  filter(MSOA.of.workplace.code == "E02002089") %>% 
+  rename("msoaCode" = Middle.layer.Super.Output.Areas.code) %>%
+  left_join(workingPopulation %>% select("msoaCode", "2021_working_population"), by = "msoaCode") %>%
+  mutate(Count = as.numeric(Count)) %>%
+  mutate("2021_working_population" = as.numeric(`2021_working_population`)) %>%
+  mutate(shareResidentsCommuteCity = (Count/`2021_working_population`) *100) %>%
+  filter(Place.of.work.indicator..4.categories..code == 3) %>%
+  mutate(Middle.layer.Super.Output.Areas.label = as.character(Middle.layer.Super.Output.Areas.label)) %>%
+  filter(str_detect(Middle.layer.Super.Output.Areas.label, "^(Birmingham|Coventry|Dudley|Sandwell|Walsall|Solihull|Wolverhampton)")) 
+
+
+airportArrivals <- brumArriveAtAirport %>%
+  summarise(
+    total_count = sum(Count, na.rm = TRUE),
+    total_population = sum(`2021_working_population`, na.rm = TRUE)
+  ) %>%
+  mutate(airport_average_percent = (total_count / total_population) * 100)
+
+
+# Step 2: Add a column to df comparing each row to the average
+airport_average_percent <- airportArrivals$airport_average_percent
+
+brumArriveAtAirport <- brumArriveAtAirport %>%
+  mutate(difference_from_avg = shareResidentsCommuteCity - airport_average_percent) %>%
+  mutate(
+    above_or_below_avg = case_when(
+      shareResidentsCommuteCity > airport_average_percent ~ "Above average",
+      shareResidentsCommuteCity < airport_average_percent ~ "Below average",
+      shareResidentsCommuteCity == airport_average_percent ~ "Equal to average",
+      TRUE ~ NA_character_  # handles missing data
+    )
+  ) %>%
+  write_clip()
+
+
+```
